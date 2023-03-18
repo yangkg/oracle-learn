@@ -1,0 +1,291 @@
+## Oracle之表分区
+
+### oracle 的分区表怎么使用？
+
+Oracle数据库中的分区表是一种特殊的表，其数据分布在不同的分区中，每个分区都有自己的存储空间和特定的属性。通过将表分成多个分区，可以提高数据访问的效率，同时还可以更容易地管理和维护数据。
+
+下面是一些使用Oracle分区表的基本步骤：
+
+#### 创建分区表 
+
+在创建表时，可以通过指定PARTITION BY子句来将表分成不同的分区。例如，以下语句将创建一个按日期范围进行分区的表：
+
+~~~sql
+CREATE TABLE sales
+(
+   sales_id       NUMBER,
+   sales_date     DATE,
+   sales_amount   NUMBER
+)
+PARTITION BY RANGE (sales_date)
+(
+   PARTITION p1 VALUES LESS THAN (TO_DATE('01-JAN-2015', 'DD-MON-YYYY')),
+   PARTITION p2 VALUES LESS THAN (TO_DATE('01-JAN-2016', 'DD-MON-YYYY')),
+   PARTITION p3 VALUES LESS THAN (TO_DATE('01-JAN-2017', 'DD-MON-YYYY')),
+   PARTITION p4 VALUES LESS THAN (MAXVALUE)
+);
+~~~
+
+#### 插入数据
+
+~~~sql
+INSERT INTO sales (sales_id, sales_date, sales_amount)
+VALUES (1, TO_DATE('01-JAN-2014', 'DD-MON-YYYY'), 1000);
+~~~
+
+#### 查询数据
+
+查询分区表的语法与普通表相同。例如，以下查询将返回2015年1月1日至2016年1月1日之间的销售总额：
+
+~~~sql
+SELECT SUM(sales_amount) FROM sales WHERE sales_date >= TO_DATE('01-JAN-2015', 'DD-MON-YYYY') AND sales_date < TO_DATE('01-JAN-2016', 'DD-MON-YYYY');
+~~~
+
+#### 维护分区表
+
+维护分区表时，可以使用特殊的ALTER TABLE语句来添加、删除或合并分区，例如：
+
+~~~sql
+-- 添加一个新分区
+ALTER TABLE sales ADD PARTITION p5 VALUES LESS THAN (TO_DATE('01-JAN-2018', 'DD-MON-YYYY'));
+
+-- 删除一个分区
+ALTER TABLE sales DROP PARTITION p4;
+
+-- 合并两个相邻的分区
+ALTER TABLE sales MERGE PARTITIONS p2, p3 INTO p2;
+~~~
+
+需要注意的是，使用分区表时需要考虑到数据分布的情况，以及如何在查询中使用分区键，才能最大化其性能优势。
+
+### 上面说的很详细，但是怎样增加分区呢？
+
+要增加Oracle分区表的分区，可以使用ALTER TABLE语句的SPLIT PARTITION子句。以下是一个例子：
+
+假设我们已经有一个按照日期范围进行分区的sales表，并且我们要增加一个新的分区，以便能够处理将来的销售数据。我们可以执行以下操作：
+
+~~~sql
+ALTER TABLE sales 
+SPLIT PARTITION p4 AT (TO_DATE('01-JAN-2022', 'DD-MON-YYYY'))
+INTO (PARTITION p4, PARTITION p5);
+~~~
+
+在这个例子中，我们使用SPLIT PARTITION子句将p4分成两个部分：p4和p5。我们将新的分区p5放置在TO_DATE('01-JAN-2022', 'DD-MON-YYYY')这个日期之后，这将使得销售日期在这个日期之后的数据都存储在p5分区中。
+
+注意，在执行SPLIT PARTITION操作之前，必须要确保表的主键或唯一约束条件在分区内是唯一的，否则操作将会失败。如果存在全局索引或者分区索引，那么在执行SPLIT PARTITION操作之后可能需要重建相关的索引。
+
+需要注意的是，对于具有大量数据的分区表，SPLIT PARTITION操作可能需要一定的时间才能完成，因此建议在执行此类操作之前进行备份，并避免在高负载时间段进行此类操作。
+
+### 如何对一个生产的大表进行分区
+
+对于一个已经存在的大表，如果需要对其进行分区，可以使用Oracle提供的ALTER TABLE语句来实现。
+
+以下是一些可能需要考虑的步骤：
+
+#### 创建新的分区表
+
+在对现有表进行分区之前，需要先创建一个新的分区表，该表的结构和现有表相同，但是包含分区定义。例如，假设我们要对一个名为SALES的表进行分区，我们可以使用以下语句创建一个新的分区表：
+
+~~~sql
+CREATE TABLE SALES_PART (
+  SALES_ID NUMBER(10),
+  SALES_DATE DATE,
+  SALES_AMOUNT NUMBER(10,2)
+)
+PARTITION BY RANGE (SALES_DATE) (
+  PARTITION P_2016 VALUES LESS THAN (TO_DATE('2017-01-01', 'YYYY-MM-DD')),
+  PARTITION P_2017 VALUES LESS THAN (TO_DATE('2018-01-01', 'YYYY-MM-DD')),
+  PARTITION P_2018 VALUES LESS THAN (TO_DATE('2019-01-01', 'YYYY-MM-DD')),
+  PARTITION P_MAX_VALUE VALUES LESS THAN (MAXVALUE)
+);
+~~~
+
+#### 导入数据到新的分区表中
+
+可以使用INSERT INTO SELECT语句从现有表中将数据导入到新的分区表中，例如：
+
+~~~sql
+INSERT INTO SALES_PART
+SELECT * FROM SALES;
+~~~
+
+请注意，在导入数据之前，请确保在新表中的分区列上已经创建了索引，以确保数据导入的效率。
+
+#### 命名原始表并重命名新表为原始表的名称
+
+在导入数据之后，可以将原始表进行重命名并将新表重命名为原始表的名称，例如：
+
+~~~sql
+RENAME SALES TO SALES_OLD;
+RENAME SALES_PART TO SALES;	
+~~~
+
+#### 创建分区索引
+
+最后，如果需要使用分区索引来加速分区表的查询，可以使用CREATE INDEX语句在分区列上创建索引。例如：
+
+~~~sql
+CREATE INDEX SALES_DATE_IDX ON SALES (SALES_DATE);
+~~~
+
+这将在SALES表的SALES_DATE列上创建一个分区索引，加速查询时的分区过滤操作。
+
+需要注意的是，在对生产环境中的大表进行分区时，需要事先对系统进行足够的测试和备份，以确保数据的完整性和业务的连续性。
+
+### 如果分区后，查询没有使用分区字段查询数据会怎么样？
+
+如果对分区表进行查询时没有使用分区字段进行查询，那么Oracle数据库仍然需要访问分区表的所有分区，以便能够检查每个分区中是否有满足查询条件的数据。这将导致查询性能下降，甚至可能比对非分区表进行查询的性能更差。
+
+因此，在查询分区表时，应尽可能使用分区字段进行查询，以确保Oracle数据库可以仅检查包含查询条件的分区，从而获得更好的性能。例如，在查询SALES分区表时，可以使用以下语句仅查询包含2018年销售数据的分区：
+
+~~~sql
+SELECT * FROM SALES WHERE SALES_DATE >= TO_DATE('2018-01-01', 'YYYY-MM-DD') AND SALES_DATE < TO_DATE('2019-01-01', 'YYYY-MM-DD');
+~~~
+
+这将使Oracle数据库仅访问2018年的分区，从而避免了访问其他分区的开销。如果没有使用分区字段进行查询，Oracle数据库将不得不访问整个表，以便确定是否有满足查询条件的数据。这可能会导致性能下降，并且在查询非常大的表时，可能会导致查询超时或其他问题。
+
+总之，对于分区表，应尽可能使用分区字段进行查询，以确保获得最佳性能和最短的查询响应时间。
+
+### 如果分区后，修改数据没有使用分区字段会怎么样？
+
+如果在对分区表进行数据修改时没有使用分区字段，那么Oracle数据库将不得不锁定整个表，以确保不会出现数据冲突和其他问题。这可能会导致性能下降，并且在修改非常大的表时，可能会导致修改操作超时或其他问题。
+
+因此，在对分区表进行数据修改时，应尽可能使用分区字段进行修改，以确保Oracle数据库可以仅修改包含要修改数据的分区，从而获得更好的性能。例如，在对SALES分区表进行修改时，可以使用以下语句仅修改2018年的销售数据:
+
+~~~sql
+UPDATE SALES SET SALES_AMOUNT = SALES_AMOUNT * 1.1 WHERE SALES_DATE >= TO_DATE('2018-01-01', 'YYYY-MM-DD') AND SALES_DATE < TO_DATE('2019-01-01', 'YYYY-MM-DD');
+~~~
+
+这将使Oracle数据库仅修改2018年的分区，而不是锁定整个表。如果没有使用分区字段进行修改，Oracle数据库将锁定整个表，以确保不会出现数据冲突和其他问题。这可能会导致性能下降，并且在修改非常大的表时，可能会导致修改操作超时或其他问题。
+
+总之，对于分区表，应尽可能使用分区字段进行数据修改，以确保获得最佳性能和最短的修改响应时间。
+
+### 分区时可以使用多字段分区吗？
+
+是的，Oracle数据库允许使用多个字段来进行分区。这种分区方式称为多字段分区或复合分区。
+
+在多字段分区中，可以使用多个列来定义分区键，这些列组合起来将用于唯一标识分区。例如，假设我们有一个SALES表，它包含以下字段：
+
+~~~sql
+SALES_DATE DATE,
+SALES_REGION VARCHAR2(50),
+SALES_AMOUNT NUMBER
+~~~
+
+如果我们想要对该表进行复合分区，可以使用以下语句创建分区表：
+
+~~~sql
+CREATE TABLE SALES (
+  SALES_DATE DATE,
+  SALES_REGION VARCHAR2(50),
+  SALES_AMOUNT NUMBER
+)
+PARTITION BY RANGE(SALES_DATE)
+SUBPARTITION BY HASH(SALES_REGION)
+SUBPARTITIONS 4
+(
+  PARTITION Q1_2019 VALUES LESS THAN (TO_DATE('2019-04-01', 'YYYY-MM-DD')),
+  PARTITION Q2_2019 VALUES LESS THAN (TO_DATE('2019-07-01', 'YYYY-MM-DD')),
+  PARTITION Q3_2019 VALUES LESS THAN (TO_DATE('2019-10-01', 'YYYY-MM-DD')),
+  PARTITION Q4_2019 VALUES LESS THAN (TO_DATE('2020-01-01', 'YYYY-MM-DD'))
+);
+~~~
+
+在上面的示例中，我们将使用SALES_DATE和SALES_REGION两个字段来定义分区键。使用RANGE分区方法按照SALES_DATE进行分区，使用HASH子分区方法按照SALES_REGION对每个分区进行子分区，以实现更好的数据分布和查询性能。
+
+总之，Oracle数据库支持使用多个字段来进行分区，这种方式称为多字段分区或复合分区。通过使用复合分区，可以更好地控制数据分布和查询性能，以满足不同的业务需求。
+
+### 多字段分区或复合分区支持新增分区吗？
+
+是的，多字段分区或复合分区同样支持新增分区。在复合分区中，新增分区的语法与单一分区相似，只需在CREATE TABLE或ALTER  TABLE语句中指定新增的分区范围即可。例如，假设我们有一个SALES表，它使用SALES_DATE和SALES_REGION两个字段进行复合分区。现在，我们想要在SALES表中添加一个名为Q1_2022的新分区。我们可以使用以下ALTER TABLE语句添加新分区：
+
+~~~sql
+ALTER TABLE SALES ADD PARTITION Q1_2022 
+VALUES LESS THAN (TO_DATE('2022-04-01', 'YYYY-MM-DD')) 
+SUBPARTITIONS 4;
+~~~
+
+在上面的语句中，我们使用ADD PARTITION子句指定要添加的新分区名称，使用VALUES LESS  THAN子句指定新分区的范围，以及使用SUBPARTITIONS子句指定新分区的子分区数量。添加新分区后，Oracle数据库将自动开始将新数据插入到新分区中，以便更好地控制数据分布和查询性能。
+
+总之，多字段分区或复合分区同样支持新增分区。添加新分区的语法与单一分区相似，只需在CREATE TABLE或ALTER TABLE语句中指定新增的分区范围即可。
+
+### 分区除了前面用过的RANGE和HASH，还有其他方式吗？
+
+是的，除了RANGE和HASH之外，Oracle数据库还提供了许多其他类型的分区方式，包括：
+
+1. LIST分区：根据列值的离散值列表来进行分区。可以使用列值的任何组合来定义分区，例如，可以根据国家和地区来定义分区。
+2. INTERVAL分区：根据连续的列值区间来进行分区。当使用INTERVAL分区时，Oracle数据库会自动为新的列值区间创建新的分区。例如，可以根据日期来定义分区，并使用INTERVAL分区在每个月末自动创建新分区。
+3. COLUMNS分区：根据多个列值的组合来进行分区。与复合分区类似，但COLUMNS分区可以将多个列值组合成一组来定义分区，而不需要使用RANGE或HASH。
+4. REFERENCE分区：基于其他表的主键或唯一键来进行分区。REFERENCE分区可以使用其他表的键来定义分区，并自动将数据路由到正确的分区中。
+5. SYSTEM分区：对于不需要分区的表，可以将其分配到SYSTEM分区中。这可以提高分区维护的效率，并减少对存储系统的额外负载。
+
+总之，Oracle数据库提供了多种类型的分区方式，包括LIST、INTERVAL、COLUMNS、REFERENCE和SYSTEM分区。选择正确的分区方式可以提高查询性能、提高数据的可管理性，并降低存储成本。
+
+### 怎样使用RANGE和LIST创建复合分区？
+
+可以使用RANGE和LIST方式组合来创建复合分区。在复合分区中，可以使用多个列来定义分区，这样可以更好地满足业务需求。
+
+以下是使用RANGE和LIST方式创建复合分区的步骤：
+
+创建表并指定分区键：创建表时，在CREATE TABLE语句中使用PARTITION BY RANGE/LIST COLUMNS子句指定分区键。例如：
+
+~~~sql
+CREATE TABLE sales (
+  sales_id NUMBER,
+  sales_date DATE,
+  sales_region VARCHAR2(50),
+  sales_type VARCHAR2(50),
+  sales_amount NUMBER
+)
+PARTITION BY RANGE(sales_date)
+SUBPARTITION BY LIST(sales_region, sales_type)
+(
+  PARTITION p_2019_q1 VALUES LESS THAN (TO_DATE('2019-04-01', 'YYYY-MM-DD'))
+  (
+    SUBPARTITION sp_eastern_small VALUES ('east', 'small'),
+    SUBPARTITION sp_eastern_large VALUES ('east', 'large'),
+    SUBPARTITION sp_western_small VALUES ('west', 'small'),
+    SUBPARTITION sp_western_large VALUES ('west', 'large')
+  ),
+  PARTITION p_2019_q2 VALUES LESS THAN (TO_DATE('2019-07-01', 'YYYY-MM-DD'))
+  (
+    SUBPARTITION sp_eastern_small VALUES ('east', 'small'),
+    SUBPARTITION sp_eastern_large VALUES ('east', 'large'),
+    SUBPARTITION sp_western_small VALUES ('west', 'small'),
+    SUBPARTITION sp_western_large VALUES ('west', 'large')
+  ),
+  PARTITION p_2019_q3 VALUES LESS THAN (TO_DATE('2019-10-01', 'YYYY-MM-DD'))
+  (
+    SUBPARTITION sp_eastern_small VALUES ('east', 'small'),
+    SUBPARTITION sp_eastern_large VALUES ('east', 'large'),
+    SUBPARTITION sp_western_small VALUES ('west', 'small'),
+    SUBPARTITION sp_western_large VALUES ('west', 'large')
+  ),
+  PARTITION p_2019_q4 VALUES LESS THAN (TO_DATE('2020-01-01', 'YYYY-MM-DD'))
+  (
+    SUBPARTITION sp_eastern_small VALUES ('east', 'small'),
+    SUBPARTITION sp_eastern_large VALUES ('east', 'large'),
+    SUBPARTITION sp_western_small VALUES ('west', 'small'),
+    SUBPARTITION sp_western_large VALUES ('west', 'large')
+  )
+);
+~~~
+
+在上述示例中，我们使用RANGE方式按照sales_date列对表进行分区，同时使用LIST方式按照sales_region和sales_type列对每个分区进行子分区。这样就可以在每个分区中更好地控制数据的分布和查询性能。
+
+1. 插入数据：在向表中插入数据时，必须指定分区键的值，以便数据可以路由到正确的分区中。
+2. 查询数据：当查询数据时，可以根据分区键的值进行过滤，以仅检索特定分区中的数据。如果未指定分区键的值，则Oracle数据库将检索所有分区中的数据。
+
+总之，使用RANGE和LIST方式创建复合分区需要指定分区键、插入数据和查询数据。复合分区可以更好地满
+
+
+
+### 复合分区中只用分区字段的其中一个字段进行修改或查询数据会怎么样？
+
+在复合分区中，如果只使用分区键中的一个字段进行修改或查询数据，则Oracle数据库将使用缺省分区来执行这些操作。缺省分区是在创建表时自动创建的，用于处理未指定分区键值的数据。如果没有指定使用哪个分区，那么修改和查询操作将使用缺省分区。
+
+例如，假设我们有一个使用RANGE和LIST方式创建的复合分区表，分区键由两个列组成：sales_date和sales_region。如果我们只使用sales_date列进行修改或查询，则Oracle数据库将使用缺省分区来执行这些操作。
+
+在这种情况下，如果缺省分区足够大并且具有足够好的性能，那么使用缺省分区进行修改或查询可能不会有任何问题。但是，如果缺省分区过于小或者性能不佳，那么就可能会出现性能瓶颈。
+
+因此，在设计复合分区时，应该考虑到所有分区键，而不仅仅是其中一个。这样可以确保在任何情况下都可以高效地修改和查询数据，而不会受到缺省分区的影响。
